@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>청소년 오케스트라 출석부</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <div id="login-screen">
+        <div class="login-box">
+            <h2>오케스트라 출석부 로그인</h2>
+            <div id="login-error" class="login-error-message"></div>
+            <input type="text" id="username" placeholder="아이디" required>
+            <input type="password" id="password" placeholder="비밀번호" required>
+            <button id="login-btn">로그인</button>
+        </div>
+    </div>
+
+    <div id="app-container" style="display: none;">
+        <header>
+            <div class="header-main">
+                <h1>오케스트라 출석부 시스템</h1>
+                <nav>
+                    <button class="nav-btn active" data-target="screen-attendance">출석 체크</button>
+                    <button class="nav-btn" data-target="screen-stats">통계 및 리포트</button>
+                    <button class="nav-btn" data-target="screen-data">데이터 조회</button>
+                </nav>
+            </div>
+            <div class="header-user">
+                <span id="current-user"></span>
+                <button id="logout-btn">로그아웃</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Screen 1: Attendance Checker -->
+            <div id="screen-attendance" class="screen active">
+                <div id="attendance-checker">
+                    <h2>출석 체크</h2>
+                    <div class="controls">
+                        <label for="rehearsal-select">연습일 선택:</label>
+                        <select id="rehearsal-select"></select>
+
+                        <label for="section-select">파트 선택:</label>
+                        <select id="section-select"></select>
+
+                        <button id="load-students-btn">단원 목록 불러오기</button>
+                    </div>
+                    <div id="attendance-list-container">
+                        <!-- Students for attendance check will be rendered here -->
+                    </div>
+                    <button id="save-attendance-btn" style="display: none;">출석 저장</button>
+                    <p id="save-status"></p>
+                </div>
+            </div>
+
+            <!-- Screen 2: Statistics and Reports -->
+            <div id="screen-stats" class="screen">
+                <div id="statistics-generator">
+                    <h2>통계 및 리포트</h2>
+                    <div class="controls">
+                        <label for="report-type-select">리포트 종류:</label>
+                        <select id="report-type-select">
+                            <option value="student">개인별</option>
+                            <option value="section">파트별</option>
+                        </select>
+
+                        <label for="report-target-select">리포트 대상:</label>
+                        <select id="report-target-select">
+                            <!-- This will be populated by JS -->
+                        </select>
+
+                        <button id="generate-report-btn">리포트 생성</button>
+                    </div>
+                    <div id="report-results-container">
+                        <!-- Report results will be rendered here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Screen 3: Raw Data Viewer -->
+            <div id="screen-data" class="screen">
+                <h2>데이터 조회</h2>
+                <div id="data-management-container">
+                    <h3>데이터 관리</h3>
+                    <button id="export-csv-btn">CSV로 내보내기</button>
+                    <button id="import-csv-btn">CSV에서 가져오기</button>
+                    <input type="file" id="import-csv-input" accept=".zip" style="display: none;">
+                </div>
+                <nav class="data-tabs">
+                    <button class="data-tab-btn active" data-target="data-screen-students">단원 목록</button>
+                    <button class="data-tab-btn" data-target="data-screen-sections">파트 목록</button>
+                    <button class="data-tab-btn" data-target="data-screen-rehearsals">연습일정</button>
+                </nav>
+                
+                <div id="data-screen-students" class="data-screen active">
+                    <div id="students-container">
+                        <h3>단원 목록</h3>
+                        <button class="add-btn" data-table="students">단원 추가</button>
+                        <div id="students-table"></div>
+                    </div>
+                </div>
+
+                <div id="data-screen-sections" class="data-screen">
+                    <div id="sections-container">
+                        <h3>파트 목록</h3>
+                        <button class="add-btn" data-table="sections">파트 추가</button>
+                        <div id="sections-table"></div>
+                    </div>
+                </div>
+
+                <div id="data-screen-rehearsals" class="data-screen">
+                     <div id="rehearsals-container">
+                        <h3>연습일정</h3>
+                        <button class="add-btn" data-table="rehearsals">연습일정 추가</button>
+                        <div id="rehearsals-table"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

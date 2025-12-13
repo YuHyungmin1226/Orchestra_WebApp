@@ -1,0 +1,4 @@
+﻿user_id,username,password,name,role
+1,admin,admin,김관리,admin
+2,instructor1,pw1,이강사,instructor
+3,instructor2,pw2,박강사,instructor
