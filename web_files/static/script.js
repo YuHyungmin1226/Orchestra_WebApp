@@ -174,6 +174,8 @@ async function startApp() {
     populateDropdown('rehearsal-select', store.rehearsals, 'rehearsal_id', 'date');
     populateDropdown('section-select', store.sections, 'section_id', 'section_name', true);
     setupReportTarget(); // Ensure report targets reflect latest data
+    await ensureTodayRehearsalSelected();
+    renderAttendanceList(); // Show initial list without extra clicks
 
     if (listenersInitialized) {
         return;
@@ -197,6 +199,10 @@ async function startApp() {
             button.classList.add('active');
         });
     });
+
+    // Auto-render attendance when selection changes
+    document.getElementById('rehearsal-select').addEventListener('change', renderAttendanceList);
+    document.getElementById('section-select').addEventListener('change', renderAttendanceList);
 
     // Initialize Data Screen Tabs
     const dataTabButtons = document.querySelectorAll('.data-tab-btn');
@@ -480,10 +486,71 @@ function populateDropdown(selectId, data, valueKey, textKey, includeAllOption = 
 }
 
 /**
+ * Ensure rehearsal selection defaults to today; optionally create today's rehearsal if missing.
+ */
+async function ensureTodayRehearsalSelected() {
+    const today = new Date().toISOString().split('T')[0];
+    const rehearsalSelect = document.getElementById('rehearsal-select');
+    const todayRehearsal = store.rehearsals.find(r => r.date === today);
+
+    if (todayRehearsal) {
+        rehearsalSelect.value = todayRehearsal.rehearsal_id;
+        return;
+    }
+
+    // Prompt to create today's rehearsal if not present
+    const shouldCreate = confirm(`오늘 날짜(${today})의 연습 일정이 없습니다. 새 일정으로 생성할까요?`);
+    if (!shouldCreate) {
+        return;
+    }
+
+    try {
+        const payload = {
+            filename: 'rehearsals.csv',
+            primary_key_col: 'rehearsal_id',
+            record: {
+                date: today,
+                location: '',
+                description: '자동 생성'
+            }
+        };
+        const response = await fetch('/api/add_data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || result.message || '오늘 연습일 생성 실패');
+        }
+        // Refresh data and select the newly created rehearsal (fallback to latest ID)
+        await fetchData('/api/rehearsals', 'rehearsals');
+        normalizeStoreIds();
+        populateDropdown('rehearsal-select', store.rehearsals, 'rehearsal_id', 'date');
+        const createdId = result.new_record?.rehearsal_id || result.new_record?.id;
+        if (createdId) {
+            rehearsalSelect.value = String(createdId);
+        } else if (store.rehearsals.length > 0) {
+            const maxId = store.rehearsals.reduce((max, r) => Math.max(max, Number(r.rehearsal_id)), 0);
+            rehearsalSelect.value = String(maxId);
+        }
+        renderAttendanceList();
+    } catch (error) {
+        console.error('Failed to create today rehearsal:', error);
+        show_toast_message(`오늘 연습일 생성 실패: ${error.message}`, 'error');
+    }
+}
+
+/**
  * Renders the list of students for a selected section or all students for attendance checking.
  */
 function renderAttendanceList() {
     const rehearsalSelect = document.getElementById('rehearsal-select');
+    if (!rehearsalSelect || rehearsalSelect.selectedIndex < 0) {
+        document.getElementById('attendance-list-container').innerHTML = '<p>연습일을 선택해 주세요.</p>';
+        document.getElementById('save-attendance-btn').style.display = 'none';
+        return;
+    }
     const selectedRehearsalText = rehearsalSelect.options[rehearsalSelect.selectedIndex].text;
     const sectionId = document.getElementById('section-select').value;
     const container = document.getElementById('attendance-list-container');

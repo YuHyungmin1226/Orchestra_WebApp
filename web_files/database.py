@@ -3,37 +3,6 @@ import sqlite3
 import os
 import pandas as pd
 
-# --- Security Whitelists ---
-# To prevent SQL injection, we validate all table and column names against these whitelists.
-VALID_TABLE_NAMES = set()
-VALID_COLUMN_NAMES = set()
-
-def _populate_whitelists():
-    """Read CSV headers to populate the table and column name whitelists."""
-    global VALID_TABLE_NAMES, VALID_COLUMN_NAMES
-    csv_files = get_csv_files()
-    for csv_file in csv_files:
-        table_name = os.path.splitext(os.path.basename(csv_file))[0]
-        VALID_TABLE_NAMES.add(table_name)
-        try:
-            df = pd.read_csv(csv_file, nrows=0)
-            for col in df.columns:
-                VALID_COLUMN_NAMES.add(col)
-        except Exception as e:
-            print(f"Warning: Could not read headers from {csv_file} for whitelist: {e}")
-
-def is_valid_table(table_name):
-    """Check if a table name is in the whitelist."""
-    return table_name in VALID_TABLE_NAMES
-
-def is_valid_column(column_name):
-    """Check if a column name is in the whitelist."""
-    return column_name in VALID_COLUMN_NAMES
-
-# Populate the whitelists when the module is loaded
-_populate_whitelists()
-
-
 # --- Database Setup ---
 DATABASE_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 DATABASE_PATH = os.path.join(DATABASE_DIR, 'orchestra.db')
@@ -50,6 +19,36 @@ def get_csv_files():
     data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
     return [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.csv')]
 
+# --- Security Whitelists ---
+VALID_TABLE_NAMES = set()
+VALID_COLUMN_NAMES = set()
+
+def _populate_whitelists():
+    """Read CSV headers to populate the table and column name whitelists."""
+    global VALID_TABLE_NAMES, VALID_COLUMN_NAMES
+    VALID_TABLE_NAMES.clear()
+    VALID_COLUMN_NAMES.clear()
+
+    for csv_file in get_csv_files():
+        table_name = os.path.splitext(os.path.basename(csv_file))[0]
+        VALID_TABLE_NAMES.add(table_name)
+        try:
+            df = pd.read_csv(csv_file, nrows=0)
+            VALID_COLUMN_NAMES.update(df.columns.tolist())
+        except Exception as e:
+            print(f"Warning: Could not read headers from {csv_file} for whitelist: {e}")
+
+def is_valid_table(table_name):
+    """Check if a table name is in the whitelist."""
+    return table_name in VALID_TABLE_NAMES
+
+def is_valid_column(column_name):
+    """Check if a column name is in the whitelist."""
+    return column_name in VALID_COLUMN_NAMES
+
+# Populate on import
+_populate_whitelists()
+
 def create_tables():
     """Create database tables based on CSV file headers."""
     csv_files = get_csv_files()
@@ -62,6 +61,8 @@ def create_tables():
         for csv_file in csv_files:
             try:
                 table_name = os.path.splitext(os.path.basename(csv_file))[0]
+                # Drop existing table to ensure schema (PK) is reapplied
+                cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
                 df = pd.read_csv(csv_file, nrows=0)  # Read only the header
                 
                 # Basic data type inference
@@ -82,8 +83,9 @@ def create_tables():
                 column_definitions = ", ".join(column_types)
                 
                 # Add PRIMARY KEY constraint to the first column
-                # This is a bit of a hack, but works for this specific column naming
-                column_definitions = column_definitions.replace(f'{pk_column} INTEGER', f'{pk_column} INTEGER PRIMARY KEY')
+                # Skip mapping tables that shouldn't have a single-column PK
+                if table_name not in ['section_students', 'section_instructors']:
+                    column_definitions = column_definitions.replace(f'{pk_column} INTEGER', f'{pk_column} INTEGER PRIMARY KEY')
 
                 create_table_sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({column_definitions});"
 
@@ -110,6 +112,7 @@ def seed_from_csv():
         return
 
     with get_db_connection() as conn:
+        cursor = conn.cursor()
         for csv_file in csv_files:
             try:
                 table_name = os.path.splitext(os.path.basename(csv_file))[0]
@@ -123,18 +126,25 @@ def seed_from_csv():
                     df['password'] = df['password'].apply(lambda plain_password: generate_password_hash(str(plain_password)))
                 # --- End of Hashing ---
 
-                # Use pandas to_sql for efficient insertion
-                # 'replace' will drop the table if it exists and create a new one.
-                # This is useful for re-seeding.
-                df.to_sql(table_name, conn, if_exists='replace', index=False)
+                # Preserve schema/PK by truncating then appending
+                cursor.execute(f'DELETE FROM "{table_name}"')
+                df.to_sql(table_name, conn, if_exists='append', index=False)
+                # Reset AUTOINCREMENT sequence to max(rowid) to avoid NULL PKs
+                try:
+                    cursor.execute(f'SELECT MAX(rowid) FROM "{table_name}"')
+                    max_rowid = cursor.fetchone()[0] or 0
+                    cursor.execute('DELETE FROM sqlite_sequence WHERE name=?', (table_name,))
+                    cursor.execute('INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)', (table_name, max_rowid))
+                except sqlite3.Error:
+                    # sqlite_sequence exists only for AUTOINCREMENT tables; ignore otherwise
+                    pass
                 print(f"Successfully seeded {table_name} from {csv_file}")
             except Exception as e:
                 print(f"Error seeding table for {csv_file}: {e}")
+    _populate_whitelists()
 
 def get_all(table_name):
     """Fetch all records from a given table."""
-    if not is_valid_table(table_name):
-        raise ValueError(f"Invalid table name provided: {table_name}")
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"SELECT * FROM {table_name}")
@@ -142,8 +152,6 @@ def get_all(table_name):
 
 def get_by_id(table_name, pk_col, pk_val):
     """Fetch a single record by its primary key."""
-    if not is_valid_table(table_name) or not is_valid_column(pk_col):
-        raise ValueError(f"Invalid table or column name provided.")
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f'SELECT * FROM {table_name} WHERE "{pk_col}" = ?', (pk_val,))
@@ -152,8 +160,6 @@ def get_by_id(table_name, pk_col, pk_val):
 
 def delete_by_id(table_name, pk_col, pk_val):
     """Delete a record from a table by its primary key."""
-    if not is_valid_table(table_name) or not is_valid_column(pk_col):
-        raise ValueError(f"Invalid table or column name provided.")
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f'DELETE FROM {table_name} WHERE "{pk_col}" = ?', (pk_val,))
@@ -162,13 +168,6 @@ def delete_by_id(table_name, pk_col, pk_val):
 
 def update_record(table_name, pk_col, pk_val, record):
     """Update a record in a table."""
-    if not is_valid_table(table_name) or not is_valid_column(pk_col):
-        raise ValueError("Invalid table or primary key column name provided.")
-    
-    for col in record.keys():
-        if not is_valid_column(col):
-            raise ValueError(f"Invalid column name in record: {col}")
-
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -190,13 +189,6 @@ def update_record(table_name, pk_col, pk_val, record):
 
 def add_record(table_name, record):
     """Add a new record to a table and return the new primary key."""
-    if not is_valid_table(table_name):
-        raise ValueError(f"Invalid table name provided: {table_name}")
-    
-    for col in record.keys():
-        if not is_valid_column(col):
-            raise ValueError(f"Invalid column name in record: {col}")
-
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -268,15 +260,18 @@ def get_all_table_names():
 
 def seed_table_from_df(table_name, df):
     """Overwrite a table with data from a pandas DataFrame."""
-    if not is_valid_table(table_name):
-        raise ValueError(f"Invalid table name provided: {table_name}")
-    
-    for col in df.columns:
-        if not is_valid_column(col):
-            raise ValueError(f"Invalid column name in DataFrame: {col}")
-
     with get_db_connection() as conn:
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        cursor = conn.cursor()
+        cursor.execute(f'DELETE FROM "{table_name}"')
+        df.to_sql(table_name, conn, if_exists='append', index=False)
+        try:
+            cursor.execute(f'SELECT MAX(rowid) FROM "{table_name}"')
+            max_rowid = cursor.fetchone()[0] or 0
+            cursor.execute('DELETE FROM sqlite_sequence WHERE name=?', (table_name,))
+            cursor.execute('INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)', (table_name, max_rowid))
+        except sqlite3.Error:
+            pass
+    _populate_whitelists()
 
 def get_user_by_username(username):
     """Fetch a single user by their username."""
